@@ -175,7 +175,11 @@ function sendRequest(path, method, data, useToken, callback) {
     );
     req.write(JSON.stringify(data));
     req.on('error', function (error) {
-        var answer = returnError(error.code);
+        if (error.message !== undefined) {
+            var answer = returnError(error.message, error.errno);
+        } else {
+            var answer = returnError(error.code, error.errno);
+        }
         callback(answer);
     });
     req.end();
@@ -216,10 +220,13 @@ function getToken(callback) {
  *
  *  @return object
  */
-function returnError(message) {
+function returnError(message, code) {
     var data = {is_error: 1};
     if (message !== undefined && message.length) {
         data['message'] = message
+    }
+    if (code !== undefined && code) {
+        data['error_code'] = code;
     }
     return data;
 }
@@ -241,14 +248,27 @@ function serialize(mixed_value) {
                 l = str.length,
                 code = '';
             for (i = 0; i < l; i++) {
-                code = str.charCodeAt(i);
-                if (code < 0x0080) {
-                    size += 1;
-                } else if (code < 0x0800) {
-                    size += 2;
+              code = str.charCodeAt(i);
+              if (code < 0x0080) { //[0x0000, 0x007F]
+                size += 1;
+              } else if (code < 0x0800) { //[0x0080, 0x07FF]
+                size += 2;
+              } else if (code < 0xD800) { //[0x0800, 0xD7FF]
+                size += 3;
+              } else if (code < 0xDC00) { //[0xD800, 0xDBFF]
+                var lo=str.charCodeAt(++i);
+                if (i < l && lo >= 0xDC00 && lo <= 0xDFFF) { //followed by [0xDC00, 0xDFFF]
+                  size += 4;
                 } else {
-                    size += 3;
+                  // UCS-2 String malformed
+                  size = 0
                 }
+              } else if (code < 0xE000) { //[0xDC00, 0xDFFF]
+                //  UCS-2 String malformed
+                size = 0
+              } else { //[0xE000, 0xFFFF]
+                size += 3;
+              }
             }
             return size;
         },
@@ -1267,6 +1287,30 @@ function smsDeleteCampaign(callback, campaign_id) {
     sendRequest('sms/campaigns', 'DELETE', data, true, callback);
 }
 
+/**
+ * Send row request to RestAPI
+ *
+ * @param path
+ * @param method
+ * @param data
+ * @param callback
+ */
+function sendRowRequest(path, method, data, callback) {
+    if (data === undefined) {
+        data = {};
+    }
+    if (!callback) {
+        callback = function () {
+        }
+    }
+    var allowedMethods = ['POST', 'GET', 'DELETE', 'PUT', 'PATCH'];
+    if (!allowedMethods.includes(method)) {
+        return callback(returnError('Method not allowed'));
+    }
+
+    sendRequest(path, method, data, true, callback);
+}
+
 exports.init = init;
 exports.listAddressBooks = listAddressBooks;
 exports.createAddressBook = createAddressBook;
@@ -1325,3 +1369,4 @@ exports.smsCancelCampaign = smsCancelCampaign;
 exports.smsGetCampaignCost = smsGetCampaignCost;
 exports.smsDeleteCampaign = smsDeleteCampaign;
 exports.getToken = getToken;
+exports.sendRequest = sendRowRequest;
